@@ -10,7 +10,6 @@
       "postinstall": "npx playwright install --with-deps chromium"
     },
     "dependencies": {
-      "@supabase/supabase-js": "^2.44.3",
       "express": "^4.19.2",
       "playwright": "^1.45.1"
     },

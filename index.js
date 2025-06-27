@@ -132,64 +132,61 @@ async function createAuthenticatedContext(platform) {
 
 // Enhanced document editing endpoint for AI chatbot integration
 app.post("/edit-doc", async (req, res) => {
-  const { docUrl, instruction, userId } = req.body;
+  const { docUrl, instruction, authState } = req.body;
 
-  if (!docUrl || !instruction || !userId) {
-    return res.status(400).json({ 
-      error: "docUrl, instruction, and userId are required.",
-      example: {
-        userId: "user_12345",
-        docUrl: "https://docs.google.com/document/d/your-doc-id/edit",
-        instruction: "Add a new paragraph with the text 'Hello World'",
-      }
+  if (!docUrl || !instruction) {
+    return res.status(400).json({
+      error: "The 'docUrl' and 'instruction' are required in the request body."
+    });
+  }
+
+  if (!authState) {
+    return res.status(401).json({
+      error: "Authentication credentials are required. Please include the 'authState' object in your request.",
+      login_required: true,
     });
   }
 
   const platform = detectPlatform(docUrl);
   if (!platform) {
-    return res.status(400).json({ error: 'Unsupported document platform.' });
+    return res.status(400).json({ error: 'Unsupported document platform for the provided URL.' });
   }
 
-  let browser;
+  let context;
   try {
-    const authState = await getCredentials(userId, platform.type);
-
-    if (!authState) {
-      return res.status(401).json({
-        error: `Authentication required for ${platform.name}.`,
-        platform: platform.type,
-        loginUrl: `https://your-chatbot-frontend.com/auth-handler?userId=${userId}&platform=${platform.type}`
-      });
-    }
-
-    const context = await chromium.launchPersistentContext('', {
-        headless: true,
-        storageState: authState,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage'
-        ]
+    context = await chromium.launchPersistentContext('', {
+      headless: true,
+      storageState: authState,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+      ]
     });
-    
+
     const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
-    
     const docPage = new platform.PageClass(page);
 
-    console.log(`Navigating to document: ${docUrl}`);
+    console.log(`Navigating to ${platform.name} document: ${docUrl}`);
     await docPage.navigate(docUrl);
 
     console.log(`Executing instruction: "${instruction}"`);
     await docPage.executeInstruction(instruction);
 
     res.json({ success: true, message: `Successfully executed instruction on ${platform.name}.` });
-    
-    await context.close();
 
   } catch (error) {
-    console.error(`Error during /edit-doc: ${error.message}`);
-    res.status(500).json({ error: `An error occurred: ${error.message}` });
-    if (browser) await browser.close();
+    console.error(`Error during automation for ${docUrl}:`, error);
+    res.status(500).json({
+      error: `An error occurred during automation: ${error.message}`,
+      details: 'This could be due to invalid credentials, network issues, or changes in the website structure.'
+    });
+  } finally {
+    if (context) {
+      await context.close();
+      console.log('Browser context closed.');
+    }
   }
 });
 
@@ -251,46 +248,10 @@ async function executeAutoInstruction(pageObject, instruction, options, platform
 
 // Enhanced health check endpoint with cloud deployment support
 app.get("/health", (req, res) => {
-  const authStatus = {};
-  const envCredentials = {};
-  
-  // Check authentication status for each platform
-  const platforms = ['google', 'notion', 'microsoft'];
-  platforms.forEach(platform => {
-    const platformName = getPlatformName(platform === 'google' ? 'google-docs' : platform);
-    authStatus[platformName] = hasAuthentication(platform);
-    envCredentials[platformName] = {
-      hasEmail: !!process.env[`${platform.toUpperCase()}_EMAIL`],
-      hasPassword: !!process.env[`${platform.toUpperCase()}_PASSWORD`]
-    };
-  });
-
-  // Deployment environment detection
-  const isRender = !!process.env.RENDER;
-  const isLocal = process.env.NODE_ENV !== 'production' && !isRender;
-  
   res.json({
-    status: "healthy",
-    version: "3.0.0-supabase",
-    environment: {
-      isRender,
-      isLocal,
-      deployment: isRender ? 'render' : isLocal ? 'local' : 'production'
-    },
-    platforms: ['Google Docs', 'Google Slides', 'Google Sheets', 'Notion', 'Microsoft Office'],
-    authentication: authStatus,
-    credentials: envCredentials,
-    features: {
-      smartFileDetection: true,
-      aiChatbotIntegration: true,
-      cloudDeployment: true,
-      autoAuthentication: true
-    },
-    uptime: process.uptime(),
-    supabase: {
-      connected: !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY)
-    },
-    timestamp: new Date().toISOString()
+    status: 'healthy',
+    version: '4.0.0-worker',
+    description: 'Playwright Automation Worker is ready to receive tasks.'
   });
 });
 
@@ -412,11 +373,5 @@ app.post('/save-credentials', async (req, res) => {
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Playwright Agent (Supabase Edition) is running on port ${PORT}`);
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.warn('⚠️ WARNING: Supabase environment variables are not set. The agent will not be able to connect to the database.');
-  }
-  console.log(`📋 Supported platforms: ${Object.values(SUPPORTED_PLATFORMS).map(p => p.name).join(', ')}`);
-  console.log(`🌐 Health check: http://localhost:${PORT}/health`);
-  console.log(`📄 API Documentation: http://localhost:${PORT}/platforms`);
+  console.log(`Playwright Worker is running on port ${PORT}`);
 });
