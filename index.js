@@ -14,7 +14,6 @@ const {
   detectFileTypeFromUrl,
   detectFileTypeFromContent,
   hasAuthentication,
-  getAuthFilePath,
   autoSetupAuthentication
 } = require("./cloud-auth");
 
@@ -55,14 +54,6 @@ function detectPlatform(url) {
   }
 }
 
-function getAuthFilePath(authFile) {
-  return path.join(AUTH_DIR, authFile);
-}
-
-function authFileExists(authFile) {
-  return fs.existsSync(getAuthFilePath(authFile));
-}
-
 // Helper functions for smart detection
 function getPlatformName(fileType) {
   const typeMap = {
@@ -98,7 +89,7 @@ async function createAuthenticatedContext(platform) {
     await autoSetupAuthentication();
   }
 
-  const authFile = getAuthFilePath(platform.authFile.replace('-auth.json', ''));
+  const authFile = platform.authFile.replace('-auth.json', '');
   
   if (!fs.existsSync(authFile)) {
     throw new Error(`Authentication not configured for ${platform.name}. Please set environment variables: GOOGLE_EMAIL, GOOGLE_PASSWORD, NOTION_EMAIL, NOTION_PASSWORD, etc.`);
