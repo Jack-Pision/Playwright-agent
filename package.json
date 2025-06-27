@@ -6,8 +6,7 @@
     "scripts": {
       "start": "node index.js",
       "dev": "nodemon index.js",
-      "test": "node test-automation.js",
-      "postinstall": "npx playwright install --with-deps chromium"
+      "test": "node test-automation.js"
     },
     "dependencies": {
       "express": "^4.19.2",
