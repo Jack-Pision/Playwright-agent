@@ -2,7 +2,6 @@ const express = require("express");
 const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
-const { getCredentials, saveCredentials } = require('./supabase-service');
 
 // Import Page Object Models
 const GoogleDocsPage = require("./page-objects/GoogleDocsPage");
@@ -343,23 +342,6 @@ function getExampleInstructions(fileType) {
   };
   return examples[fileType] || ['Add text to document'];
 }
-
-// Endpoint for the chatbot to save new credentials to Supabase
-app.post('/save-credentials', async (req, res) => {
-  const { userId, platform, authState } = req.body;
-
-  if (!userId || !platform || !authState) {
-    return res.status(400).json({ error: 'userId, platform, and authState are required.' });
-  }
-
-  try {
-    await saveCredentials(userId, platform, authState);
-    res.status(201).json({ success: true, message: 'Credentials saved successfully.' });
-  } catch (error) {
-    console.error(`Error during /save-credentials: ${error.message}`);
-    res.status(500).json({ error: `Failed to save credentials: ${error.message}` });
-  }
-});
 
 // Start server
 const PORT = process.env.PORT || 3000;
