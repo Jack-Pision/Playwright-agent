@@ -373,3 +373,229 @@ MIT License - see LICENSE file for details.
 ---
 
 **Built with ❤️ using Playwright, Express.js, and modern web automation techniques.** 
+
+# Playwright Agent 2.1.0
+
+A powerful document automation agent for Google Docs, Slides, and Notion using Playwright with OAuth support.
+
+## Features
+
+- 🔐 **OAuth Token Authentication** - Works with access tokens from your main application
+- 📄 **Google Docs Automation** - Edit, format, and modify Google Documents  
+- 🎨 **Google Slides Automation** - Create and edit presentations
+- 📝 **Notion Automation** - Automate Notion pages and blocks
+- 🚀 **Cloud-Ready** - Deployed on Render with headless browser support
+- 🔄 **Dual Authentication** - Supports both OAuth tokens and legacy authState
+
+## Authentication Methods
+
+### OAuth Token Authentication (Recommended)
+Send OAuth credentials from your main application:
+
+```javascript
+{
+  "docUrl": "https://docs.google.com/document/d/your-doc-id",
+  "instruction": "Add title 'Meeting Notes'",
+  "credentials": {
+    "access_token": "ya29.a0ARrdaM...",
+    "refresh_token": "1//04...",
+    "token_type": "Bearer"
+  }
+}
+```
+
+### Legacy AuthState Authentication
+Send browser storage state (for backward compatibility):
+
+```javascript
+{
+  "docUrl": "https://docs.google.com/document/d/your-doc-id", 
+  "instruction": "Add title 'Meeting Notes'",
+  "authState": {
+    "cookies": [...],
+    "origins": [...]
+  }
+}
+```
+
+## API Endpoints
+
+### POST /edit-doc
+Main endpoint for document automation.
+
+**Request Body:**
+```javascript
+{
+  "docUrl": "https://docs.google.com/document/d/your-doc-id",
+  "instruction": "Type Hello World",
+  "credentials": {
+    "access_token": "your-oauth-token",
+    "refresh_token": "your-refresh-token"
+  }
+}
+```
+
+**Response:**
+```javascript
+{
+  "success": true,
+  "message": "Successfully executed instruction on Google Docs.",
+  "platform": "Google Docs",
+  "url": "https://docs.google.com/document/d/your-doc-id",
+  "authMethod": "oauth"
+}
+```
+
+### POST /test-auth
+Test OAuth authentication without performing document operations.
+
+**Request Body:**
+```javascript
+{
+  "credentials": {
+    "access_token": "your-oauth-token"
+  }
+}
+```
+
+**Response:**
+```javascript
+{
+  "success": true,
+  "message": "OAuth authentication test completed",
+  "authTest": {
+    "url": "https://drive.google.com/",
+    "hasEmailInput": false,
+    "hasGoogleBar": true,
+    "hasMainContent": true,
+    "title": "Google Drive"
+  },
+  "authenticated": true
+}
+```
+
+### GET /health
+Health check endpoint.
+
+**Response:**
+```javascript
+{
+  "status": "healthy",
+  "version": "2.1.0"
+}
+```
+
+## Supported Instructions
+
+### Google Docs
+- `"Type [text]"` - Add text to document
+- `"Write [text]"` - Add text to document  
+- `"Title [text]"` - Change document title
+- `"Remove texts from it"` - Clear document content
+
+### Google Slides
+- `"Type [text]"` - Add text to slide
+- `"Title [text]"` - Change slide title
+
+### Notion
+- `"Type [text]"` - Add text block
+- `"Title [text]"` - Change page title
+
+## Deployment
+
+### Environment Variables
+No environment variables required for OAuth mode.
+
+### Render Deployment
+1. Connect your GitHub repository
+2. Set build command: `npm install && npx playwright install --with-deps chromium`
+3. Set start command: `npm start`
+4. Deploy
+
+## Integration Example
+
+### From Your Chatbot Application
+
+```javascript
+// Example: Edit a Google Doc
+const response = await fetch('https://your-playwright-agent.onrender.com/edit-doc', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    docUrl: 'https://docs.google.com/document/d/your-doc-id',
+    instruction: 'Add title "Project Meeting Notes"',
+    credentials: {
+      access_token: userOAuthToken.access_token,
+      refresh_token: userOAuthToken.refresh_token
+    }
+  })
+});
+
+const result = await response.json();
+console.log(result);
+```
+
+### Test Authentication
+
+```javascript
+// Test if OAuth token works
+const testResponse = await fetch('https://your-playwright-agent.onrender.com/test-auth', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    credentials: {
+      access_token: userOAuthToken.access_token
+    }
+  })
+});
+
+const testResult = await testResponse.json();
+if (testResult.authenticated) {
+  console.log('✅ OAuth authentication successful');
+} else {
+  console.log('❌ OAuth authentication failed');
+}
+```
+
+## Workflow
+
+```
+User Input → Chatbot → Authentication Check → Credential Check → 
+Instruction Enhancement → Playwright Agent → Document Modification
+```
+
+1. **User Input**: User requests document modification
+2. **Chatbot**: Processes natural language request
+3. **Authentication Check**: Verifies user is logged in
+4. **Credential Check**: Retrieves OAuth tokens
+5. **Instruction Enhancement**: Converts to structured instruction
+6. **Playwright Agent**: Executes automation (this service)
+7. **Document Modification**: Updates the document
+
+## Error Handling
+
+### Common Errors
+
+- `401 Unauthorized`: Missing or invalid credentials
+- `400 Bad Request`: Missing docUrl or instruction
+- `500 Internal Server Error`: Authentication failed or document access denied
+
+### Troubleshooting
+
+1. **"Not authenticated" error**: Check if OAuth token is valid and not expired
+2. **Timeout errors**: Ensure document URL is accessible and user has edit permissions
+3. **Browser errors**: Check if Playwright dependencies are properly installed
+
+## Version History
+
+- **2.1.0**: Added OAuth token authentication support
+- **2.0.0**: Simplified architecture, removed local auth storage
+- **1.x**: Legacy versions with file-based authentication
+
+## License
+
+MIT License - see LICENSE file for details. 

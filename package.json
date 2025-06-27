@@ -1,7 +1,7 @@
 {
     "name": "playwright-agent",
-    "version": "2.0.0",
-    "description": "Powerful document automation agent for Google Docs, Slides, and Notion using Playwright",
+    "version": "2.1.0",
+    "description": "Powerful document automation agent for Google Docs, Slides, and Notion using Playwright with OAuth support",
     "main": "index.js",
     "scripts": {
       "start": "node index.js",
@@ -23,7 +23,9 @@
       "google-slides", 
       "notion",
       "document-automation",
-      "browser-automation"
+      "browser-automation",
+      "oauth",
+      "google-api"
     ],
     "author": "Jack-Pision",
     "license": "MIT",
