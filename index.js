@@ -2,6 +2,7 @@ const express = require("express");
 const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
+const { getCredentials, saveCredentials } = require('./supabase-service');
 
 // Import Page Object Models
 const GoogleDocsPage = require("./page-objects/GoogleDocsPage");
@@ -18,7 +19,7 @@ const {
 } = require("./cloud-auth");
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '5mb' })); // Allow larger payloads for authState
 
 // Constants
 const AUTH_DIR = "./auth-states";
@@ -131,201 +132,64 @@ async function createAuthenticatedContext(platform) {
 
 // Enhanced document editing endpoint for AI chatbot integration
 app.post("/edit-doc", async (req, res) => {
-  const { 
-    docUrl, 
-    instruction, 
-    action = 'auto', 
-    options = {},
-    fileContent = '',
-    fileName = '',
-    chatContext = ''
-  } = req.body;
+  const { docUrl, instruction, userId } = req.body;
 
-  // Enhanced validation with AI chatbot support
-  if (!docUrl && !fileContent) {
+  if (!docUrl || !instruction || !userId) {
     return res.status(400).json({ 
-      error: "Either docUrl or fileContent is required",
+      error: "docUrl, instruction, and userId are required.",
       example: {
+        userId: "user_12345",
         docUrl: "https://docs.google.com/document/d/your-doc-id/edit",
         instruction: "Add a new paragraph with the text 'Hello World'",
-        action: "auto",
-        options: { formatting: "bold", position: "end" },
-        fileContent: "Optional: File content for smart detection",
-        fileName: "Optional: document.docx",
-        chatContext: "Optional: Additional context from AI chat"
       }
     });
   }
 
-  if (!instruction) {
-    return res.status(400).json({ 
-      error: "instruction is required",
-      suggestion: "Provide what you want to do with the document"
-    });
-  }
-
-  // Smart platform detection with AI enhancement
-  let platform = null;
-  let detectedFileType = null;
-
-  if (docUrl) {
-    detectedFileType = detectFileTypeFromUrl(docUrl);
-  } else if (fileContent || fileName) {
-    detectedFileType = detectFileTypeFromContent(fileContent, fileName);
-  }
-
-  if (detectedFileType) {
-    platform = {
-      name: getPlatformName(detectedFileType.type),
-      authFile: detectedFileType.authFile,
-      PageClass: getPageClass(detectedFileType.type)
-    };
-  }
-
+  const platform = detectPlatform(docUrl);
   if (!platform) {
-    return res.status(400).json({ 
-      error: "Could not detect document platform. Supported: Google Docs, Slides, Sheets, Notion, Microsoft Office",
-      detectedType: detectedFileType?.type || 'unknown',
-      url: docUrl,
-      suggestion: "Ensure the URL is correct or provide more context about the file type"
-    });
+    return res.status(400).json({ error: 'Unsupported document platform.' });
   }
 
-  let browser, context, page, pageObject;
-
+  let browser;
   try {
-    console.log(`🚀 Starting ${platform.name} automation for: ${docUrl}`);
-    
-    // Create authenticated browser context
-    ({ browser, context } = await createAuthenticatedContext(platform));
-    page = await context.newPage();
-    
-    // Navigate to document
-    console.log(`📄 Navigating to document...`);
-    await page.goto(docUrl, { waitUntil: 'networkidle' });
-    
-    // Initialize platform-specific page object
-    pageObject = new platform.PageClass(page);
-    
-    // Wait for platform-specific loading
-    console.log(`⏳ Waiting for ${platform.name} to load...`);
-    if (platform.name === 'Google Docs') {
-      await pageObject.waitForDocumentLoad();
-    } else if (platform.name === 'Google Slides') {
-      await pageObject.waitForPresentationLoad();
-    } else if (platform.name === 'Notion') {
-      await pageObject.waitForPageLoad();
-    }
-    
-    // Verify user is logged in
-    const isLoggedIn = await pageObject.isLoggedIn();
-    if (!isLoggedIn) {
-      return res.status(401).json({ 
-        error: `Not logged in to ${platform.name}. Please run: node setup-auth.js`,
-        platform: platform.name
+    const authState = await getCredentials(userId, platform.type);
+
+    if (!authState) {
+      return res.status(401).json({
+        error: `Authentication required for ${platform.name}.`,
+        platform: platform.type,
+        loginUrl: `https://your-chatbot-frontend.com/auth-handler?userId=${userId}&platform=${platform.type}`
       });
     }
-    
-    // Execute the instruction based on action type
-    console.log(`✏️ Executing instruction: "${instruction}"`);
-    let result;
-    
-    switch (action.toLowerCase()) {
-      case 'auto':
-        result = await executeAutoInstruction(pageObject, instruction, options, platform.name);
-        break;
-      case 'typetext':
-        if (platform.name === 'Google Docs') {
-          await pageObject.typeText(instruction);
-        } else if (platform.name === 'Notion') {
-          await pageObject.addTextBlock(instruction);
-        } else if (platform.name === 'Google Slides') {
-          await pageObject.addTextBox(instruction);
-        }
-        result = { action: 'Text typed successfully' };
-        break;
-      case 'replaceall':
-        if (platform.name === 'Google Docs') {
-          await pageObject.replaceAllText(instruction);
-        }
-        result = { action: 'Text replaced successfully' };
-        break;
-      case 'addheading':
-        if (platform.name === 'Notion') {
-          await pageObject.addHeading(instruction, options.level || 1);
-        } else if (platform.name === 'Google Slides') {
-          await pageObject.setSlideTitle(instruction);
-        }
-        result = { action: 'Heading added successfully' };
-        break;
-      case 'addlist':
-        if (platform.name === 'Notion') {
-          const items = instruction.split('\n').filter(item => item.trim());
-          await pageObject.addBulletList(items);
-        }
-        result = { action: 'List added successfully' };
-        break;
-      case 'format':
-        if (options.formatting) {
-          await pageObject.selectAllAndFormat(options.formatting);
-        }
-        result = { action: 'Formatting applied successfully' };
-        break;
-      default:
-        throw new Error(`Unsupported action: ${action}`);
-    }
-    
-    // Verify the change was successful
-    console.log(`✅ Verifying changes...`);
-    try {
-      await pageObject.verifyContentExists(instruction.substring(0, 50));
-    } catch (verifyError) {
-      console.warn('Content verification failed, but operation may have succeeded:', verifyError.message);
-    }
-    
-    console.log(`🎉 ${platform.name} automation completed successfully!`);
-    
-    res.json({ 
-      success: true, 
-      message: `Successfully applied instruction to ${platform.name} document`,
-      platform: platform.name,
-      action: action,
-      instruction: instruction,
-      result: result || { action: 'Operation completed' },
-      timestamp: new Date().toISOString()
+
+    const context = await chromium.launchPersistentContext('', {
+        headless: true,
+        storageState: authState,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage'
+        ]
     });
+    
+    const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
+    
+    const docPage = new platform.PageClass(page);
+
+    console.log(`Navigating to document: ${docUrl}`);
+    await docPage.navigate(docUrl);
+
+    console.log(`Executing instruction: "${instruction}"`);
+    await docPage.executeInstruction(instruction);
+
+    res.json({ success: true, message: `Successfully executed instruction on ${platform.name}.` });
+    
+    await context.close();
 
   } catch (error) {
-    console.error(`❌ Error during ${platform?.name || 'unknown'} automation:`, error);
-    
-    // Provide detailed error information
-    const errorResponse = {
-      error: error.message,
-      platform: platform?.name || 'unknown',
-      url: docUrl,
-      timestamp: new Date().toISOString()
-    };
-    
-    // Add specific error handling for common issues
-    if (error.message.includes('not found')) {
-      errorResponse.suggestion = 'Please check if the document URL is correct and accessible';
-    } else if (error.message.includes('timeout')) {
-      errorResponse.suggestion = 'The document took too long to load. Try again or check your internet connection';
-    } else if (error.message.includes('Authentication')) {
-      errorResponse.suggestion = 'Please run the authentication setup: node setup-auth.js';
-    }
-    
-    res.status(500).json(errorResponse);
-  } finally {
-    // Clean up browser resources
-    if (browser) {
-      try {
-        await browser.close();
-        console.log('🧹 Browser cleaned up successfully');
-      } catch (cleanupError) {
-        console.error('Error during cleanup:', cleanupError);
-      }
-    }
+    console.error(`Error during /edit-doc: ${error.message}`);
+    res.status(500).json({ error: `An error occurred: ${error.message}` });
+    if (browser) await browser.close();
   }
 });
 
@@ -407,7 +271,7 @@ app.get("/health", (req, res) => {
   
   res.json({
     status: "healthy",
-    version: "2.0.0-cloud",
+    version: "3.0.0-supabase",
     environment: {
       isRender,
       isLocal,
@@ -421,6 +285,10 @@ app.get("/health", (req, res) => {
       aiChatbotIntegration: true,
       cloudDeployment: true,
       autoAuthentication: true
+    },
+    uptime: process.uptime(),
+    supabase: {
+      connected: !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY)
     },
     timestamp: new Date().toISOString()
   });
@@ -524,12 +392,31 @@ function getExampleInstructions(fileType) {
   return examples[fileType] || ['Add text to document'];
 }
 
+// Endpoint for the chatbot to save new credentials to Supabase
+app.post('/save-credentials', async (req, res) => {
+  const { userId, platform, authState } = req.body;
+
+  if (!userId || !platform || !authState) {
+    return res.status(400).json({ error: 'userId, platform, and authState are required.' });
+  }
+
+  try {
+    await saveCredentials(userId, platform, authState);
+    res.status(201).json({ success: true, message: 'Credentials saved successfully.' });
+  } catch (error) {
+    console.error(`Error during /save-credentials: ${error.message}`);
+    res.status(500).json({ error: `Failed to save credentials: ${error.message}` });
+  }
+});
+
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Playwright Agent v2.0 running on port ${PORT}`);
+  console.log(`Playwright Agent (Supabase Edition) is running on port ${PORT}`);
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.warn('⚠️ WARNING: Supabase environment variables are not set. The agent will not be able to connect to the database.');
+  }
   console.log(`📋 Supported platforms: ${Object.values(SUPPORTED_PLATFORMS).map(p => p.name).join(', ')}`);
-  console.log(`🔐 Authentication setup: node setup-auth.js`);
   console.log(`🌐 Health check: http://localhost:${PORT}/health`);
   console.log(`📄 API Documentation: http://localhost:${PORT}/platforms`);
 });
