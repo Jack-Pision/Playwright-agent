@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: playwright-agent
+    env: node
+    plan: starter
+    buildCommand: npm install && npx playwright install chromium
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: GOOGLE_EMAIL
+        sync: false
+      - key: GOOGLE_PASSWORD
+        sync: false
+      - key: NOTION_EMAIL
+        sync: false
+      - key: NOTION_PASSWORD
+        sync: false
+      - key: MICROSOFT_EMAIL
+        sync: false
+      - key: MICROSOFT_PASSWORD
+        sync: false
+    autoDeploy: true
+    healthCheckPath: /health 

@@ -8,6 +8,15 @@ const GoogleDocsPage = require("./page-objects/GoogleDocsPage");
 const NotionPage = require("./page-objects/NotionPage");
 const GoogleSlidesPage = require("./page-objects/GoogleSlidesPage");
 
+// Import cloud authentication system
+const {
+  detectFileTypeFromUrl,
+  detectFileTypeFromContent,
+  hasAuthentication,
+  getAuthFilePath,
+  autoSetupAuthentication
+} = require("./cloud-auth");
+
 const app = express();
 app.use(express.json());
 
@@ -53,12 +62,45 @@ function authFileExists(authFile) {
   return fs.existsSync(getAuthFilePath(authFile));
 }
 
-// Enhanced browser context setup with authentication
+// Helper functions for smart detection
+function getPlatformName(fileType) {
+  const typeMap = {
+    'google-docs': 'Google Docs',
+    'google-slides': 'Google Slides',
+    'google-sheets': 'Google Sheets',
+    'notion': 'Notion',
+    'microsoft-word': 'Microsoft Word',
+    'microsoft-powerpoint': 'Microsoft PowerPoint',
+    'microsoft-office': 'Microsoft Office'
+  };
+  return typeMap[fileType] || 'Unknown';
+}
+
+function getPageClass(fileType) {
+  const classMap = {
+    'google-docs': GoogleDocsPage,
+    'google-slides': GoogleSlidesPage,
+    'google-sheets': GoogleDocsPage, // Use docs page for sheets for now
+    'notion': NotionPage,
+    'microsoft-word': GoogleDocsPage, // Similar interface
+    'microsoft-powerpoint': GoogleSlidesPage, // Similar interface
+    'microsoft-office': GoogleDocsPage
+  };
+  return classMap[fileType] || GoogleDocsPage;
+}
+
+// Cloud-optimized browser context setup with auto-authentication
 async function createAuthenticatedContext(platform) {
-  const authFile = getAuthFilePath(platform.authFile);
+  // Try auto-setup authentication if missing and credentials available
+  if (!hasAuthentication(platform.authFile.replace('-auth.json', ''))) {
+    console.log(`🔄 Auto-setting up authentication for ${platform.name}...`);
+    await autoSetupAuthentication();
+  }
+
+  const authFile = getAuthFilePath(platform.authFile.replace('-auth.json', ''));
   
-  if (!authFileExists(platform.authFile)) {
-    throw new Error(`Authentication file not found for ${platform.name}. Please run: node setup-auth.js`);
+  if (!fs.existsSync(authFile)) {
+    throw new Error(`Authentication not configured for ${platform.name}. Please set environment variables: GOOGLE_EMAIL, GOOGLE_PASSWORD, NOTION_EMAIL, NOTION_PASSWORD, etc.`);
   }
 
   const browser = await chromium.launch({ 
@@ -68,7 +110,12 @@ async function createAuthenticatedContext(platform) {
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
-      '--disable-gpu'
+      '--disable-gpu',
+      '--disable-web-security',
+      '--disable-features=VizDisplayCompositor',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding'
     ]
   });
 
@@ -82,29 +129,65 @@ async function createAuthenticatedContext(platform) {
   return { browser, context };
 }
 
-// Advanced document editing endpoint
+// Enhanced document editing endpoint for AI chatbot integration
 app.post("/edit-doc", async (req, res) => {
-  const { docUrl, instruction, action = 'auto', options = {} } = req.body;
+  const { 
+    docUrl, 
+    instruction, 
+    action = 'auto', 
+    options = {},
+    fileContent = '',
+    fileName = '',
+    chatContext = ''
+  } = req.body;
 
-  // Validation
-  if (!docUrl || !instruction) {
+  // Enhanced validation with AI chatbot support
+  if (!docUrl && !fileContent) {
     return res.status(400).json({ 
-      error: "docUrl and instruction are required",
+      error: "Either docUrl or fileContent is required",
       example: {
         docUrl: "https://docs.google.com/document/d/your-doc-id/edit",
         instruction: "Add a new paragraph with the text 'Hello World'",
-        action: "auto", // or "typeText", "replaceAll", "addHeading", etc.
-        options: { formatting: "bold", position: "end" }
+        action: "auto",
+        options: { formatting: "bold", position: "end" },
+        fileContent: "Optional: File content for smart detection",
+        fileName: "Optional: document.docx",
+        chatContext: "Optional: Additional context from AI chat"
       }
     });
   }
 
-  // Detect platform
-  const platform = detectPlatform(docUrl);
+  if (!instruction) {
+    return res.status(400).json({ 
+      error: "instruction is required",
+      suggestion: "Provide what you want to do with the document"
+    });
+  }
+
+  // Smart platform detection with AI enhancement
+  let platform = null;
+  let detectedFileType = null;
+
+  if (docUrl) {
+    detectedFileType = detectFileTypeFromUrl(docUrl);
+  } else if (fileContent || fileName) {
+    detectedFileType = detectFileTypeFromContent(fileContent, fileName);
+  }
+
+  if (detectedFileType) {
+    platform = {
+      name: getPlatformName(detectedFileType.type),
+      authFile: detectedFileType.authFile,
+      PageClass: getPageClass(detectedFileType.type)
+    };
+  }
+
   if (!platform) {
     return res.status(400).json({ 
-      error: "Unsupported platform. Supported platforms: Google Docs, Google Slides, Notion",
-      url: docUrl
+      error: "Could not detect document platform. Supported: Google Docs, Slides, Sheets, Notion, Microsoft Office",
+      detectedType: detectedFileType?.type || 'unknown',
+      url: docUrl,
+      suggestion: "Ensure the URL is correct or provide more context about the file type"
     });
   }
 
@@ -302,38 +385,144 @@ async function executeAutoInstruction(pageObject, instruction, options, platform
   return { action: 'Text added', type: 'default' };
 }
 
-// Health check endpoint
+// Enhanced health check endpoint with cloud deployment support
 app.get("/health", (req, res) => {
   const authStatus = {};
+  const envCredentials = {};
   
   // Check authentication status for each platform
-  for (const [domain, config] of Object.entries(SUPPORTED_PLATFORMS)) {
-    authStatus[config.name] = authFileExists(config.authFile);
-  }
+  const platforms = ['google', 'notion', 'microsoft'];
+  platforms.forEach(platform => {
+    const platformName = getPlatformName(platform === 'google' ? 'google-docs' : platform);
+    authStatus[platformName] = hasAuthentication(platform);
+    envCredentials[platformName] = {
+      hasEmail: !!process.env[`${platform.toUpperCase()}_EMAIL`],
+      hasPassword: !!process.env[`${platform.toUpperCase()}_PASSWORD`]
+    };
+  });
+
+  // Deployment environment detection
+  const isRender = !!process.env.RENDER;
+  const isLocal = process.env.NODE_ENV !== 'production' && !isRender;
   
   res.json({
     status: "healthy",
-    version: "2.0.0",
-    platforms: Object.values(SUPPORTED_PLATFORMS).map(p => p.name),
+    version: "2.0.0-cloud",
+    environment: {
+      isRender,
+      isLocal,
+      deployment: isRender ? 'render' : isLocal ? 'local' : 'production'
+    },
+    platforms: ['Google Docs', 'Google Slides', 'Google Sheets', 'Notion', 'Microsoft Office'],
     authentication: authStatus,
+    credentials: envCredentials,
+    features: {
+      smartFileDetection: true,
+      aiChatbotIntegration: true,
+      cloudDeployment: true,
+      autoAuthentication: true
+    },
     timestamp: new Date().toISOString()
   });
 });
 
+// Smart file detection endpoint for AI chatbot integration
+app.post("/detect-file", (req, res) => {
+  const { url, content = '', filename = '', context = '' } = req.body;
+  
+  let detectedType = null;
+  
+  if (url) {
+    detectedType = detectFileTypeFromUrl(url);
+  } else if (content || filename) {
+    detectedType = detectFileTypeFromContent(content, filename);
+  }
+  
+  if (detectedType) {
+    res.json({
+      success: true,
+      detected: {
+        type: detectedType.type,
+        platform: detectedType.platform,
+        platformName: getPlatformName(detectedType.type),
+        authFile: detectedType.authFile,
+        isAuthenticated: hasAuthentication(detectedType.platform),
+        canAutomate: hasAuthentication(detectedType.platform)
+      },
+      suggestions: getActionSuggestions(detectedType.type),
+      examples: getExampleInstructions(detectedType.type)
+    });
+  } else {
+    res.json({
+      success: false,
+      error: "Could not detect file type",
+      supportedTypes: [
+        'Google Docs (docs.google.com/document)',
+        'Google Slides (docs.google.com/presentation)',
+        'Google Sheets (docs.google.com/spreadsheets)',
+        'Notion (notion.so)',
+        'Microsoft Word (.docx, .doc)',
+        'Microsoft PowerPoint (.pptx, .ppt)'
+      ]
+    });
+  }
+});
+
 // Get supported platforms
 app.get("/platforms", (req, res) => {
-  const platforms = Object.values(SUPPORTED_PLATFORMS).map(platform => ({
-    name: platform.name,
-    authenticated: authFileExists(platform.authFile),
-    authFile: platform.authFile
+  const platforms = ['google', 'notion', 'microsoft'].map(platform => ({
+    name: getPlatformName(platform === 'google' ? 'google-docs' : platform),
+    platform: platform,
+    authenticated: hasAuthentication(platform),
+    hasCredentials: {
+      email: !!process.env[`${platform.toUpperCase()}_EMAIL`],
+      password: !!process.env[`${platform.toUpperCase()}_PASSWORD`]
+    }
   }));
   
   res.json({
     platforms,
     total: platforms.length,
-    authenticated: platforms.filter(p => p.authenticated).length
+    authenticated: platforms.filter(p => p.authenticated).length,
+    cloudReady: platforms.filter(p => p.hasCredentials.email && p.hasCredentials.password).length
   });
 });
+
+// Helper functions for AI suggestions
+function getActionSuggestions(fileType) {
+  const suggestions = {
+    'google-docs': ['typeText', 'replaceAll', 'addHeading', 'format', 'findAndReplace'],
+    'google-slides': ['setSlideTitle', 'addTextBox', 'addNewSlide', 'changeTheme'],
+    'notion': ['addTextBlock', 'addHeading', 'addBulletList', 'addCodeBlock'],
+    'microsoft-word': ['typeText', 'replaceAll', 'format'],
+    'microsoft-powerpoint': ['setSlideTitle', 'addTextBox']
+  };
+  return suggestions[fileType] || ['auto'];
+}
+
+function getExampleInstructions(fileType) {
+  const examples = {
+    'google-docs': [
+      'Add a heading: Project Overview',
+      'Replace "old text" with "new text"',
+      'Make all text bold',
+      'Add a new paragraph with project details'
+    ],
+    'google-slides': [
+      'Set slide title to: Welcome Presentation',
+      'Add a text box with: Key Points',
+      'Add a new slide with title layout',
+      'Change theme to modern'
+    ],
+    'notion': [
+      'Add a heading: Meeting Notes',
+      'Create a bullet list with action items',
+      'Add a code block with JavaScript',
+      'Add a quote block with inspiration'
+    ]
+  };
+  return examples[fileType] || ['Add text to document'];
+}
 
 // Start server
 const PORT = process.env.PORT || 3000;
