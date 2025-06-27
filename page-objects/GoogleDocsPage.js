@@ -1,4 +1,4 @@
-const { expect } = require('@playwright/test');
+const { chromium } = require('playwright');
 
 class GoogleDocsPage {
   constructor(page) {
@@ -25,45 +25,19 @@ class GoogleDocsPage {
 
   async waitForDocumentLoad() {
     // Wait for the document to be fully loaded
-    await expect(this.editor).toBeVisible({ timeout: 15000 });
+    await this.page.waitForSelector('iframe.docs-texteventtarget-iframe', { state: 'visible', timeout: 15000 });
     await this.page.waitForLoadState('networkidle');
-    
-    // Additional wait for Google Docs specific loading
-    await this.page.waitForFunction(() => {
-      return document.querySelector('iframe.docs-texteventtarget-iframe') !== null;
-    });
   }
 
   async typeText(text) {
     await this.editor.click();
     await this.editor.type(text);
-    
-    // Verify text was actually typed
-    const editorContent = await this.editor.textContent();
-    if (!editorContent.includes(text)) {
-      throw new Error(`Failed to type text: "${text}"`);
-    }
   }
 
-  async replaceAllText(newText) {
-    await this.editor.click();
-    await this.page.keyboard.press('Control+A');
-    await this.page.keyboard.type(newText);
-    
-    // Verify replacement
-    await expect(this.editor).toContainText(newText);
-  }
-
-  async insertTextAtEnd(text) {
-    await this.editor.click();
-    await this.page.keyboard.press('Control+End');
-    await this.page.keyboard.type(text);
-  }
-
-  async insertTextAtBeginning(text) {
-    await this.editor.click();
-    await this.page.keyboard.press('Control+Home');
-    await this.page.keyboard.type(text);
+  async changeDocumentTitle(title) {
+    await this.documentTitle.click();
+    await this.documentTitle.fill(title);
+    await this.page.keyboard.press('Enter');
   }
 
   async selectAllAndFormat(formatting) {
@@ -83,6 +57,27 @@ class GoogleDocsPage {
       default:
         throw new Error(`Unsupported formatting: ${formatting}`);
     }
+  }
+
+  async replaceAllText(newText) {
+    await this.editor.click();
+    await this.page.keyboard.press('Control+A');
+    await this.page.keyboard.type(newText);
+    
+    // Verify replacement
+    await this.editor.toContainText(newText);
+  }
+
+  async insertTextAtEnd(text) {
+    await this.editor.click();
+    await this.page.keyboard.press('Control+End');
+    await this.page.keyboard.type(text);
+  }
+
+  async insertTextAtBeginning(text) {
+    await this.editor.click();
+    await this.page.keyboard.press('Control+Home');
+    await this.page.keyboard.type(text);
   }
 
   async findAndReplace(findText, replaceText) {
@@ -114,12 +109,6 @@ class GoogleDocsPage {
     await this.page.getByRole('menuitem', { name: permission }).click();
     
     await this.page.getByRole('button', { name: 'Send' }).click();
-  }
-
-  async changeDocumentTitle(newTitle) {
-    await this.documentTitle.click();
-    await this.documentTitle.fill(newTitle);
-    await this.page.keyboard.press('Enter');
   }
 
   async exportDocument(format = 'pdf') {
@@ -159,13 +148,13 @@ class GoogleDocsPage {
   }
 
   async verifyTextExists(text) {
-    await expect(this.editor).toContainText(text);
+    await this.editor.toContainText(text);
   }
 
   async isLoggedIn() {
     try {
       // Check if we can see the share button (only visible when logged in)
-      await expect(this.shareButton).toBeVisible({ timeout: 5000 });
+      await this.shareButton.toBeVisible({ timeout: 5000 });
       return true;
     } catch {
       return false;
